@@ -1,0 +1,144 @@
+---
+title: "HumanActivityRecognitionProject"
+author: "jpandda111"
+date: "04/09/2018"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+#Background
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.
+In this project we aim to predict the manner in which they did the exercise. We will use the data from accelerometers on the belt, forearm, arm and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.
+More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+#Data
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+#Executive Summary
+In this report, multiple models have been built based on differnt predictors and machine learning algorithm. With several cross-validation techniques, best model has been picked with out of sample error rate = 0.4%. The average test prediction error rate is less than 1% with 20 different test cases predictions.
+
+#Exploratory Data Analysis
+###1. setup correct knitr setting and needed library
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, results = "asis",tidy = TRUE,include = TRUE,cache = TRUE)
+library(lattice)
+library(ggplot2)
+library(caret)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+library(survival)
+library(splines)
+library(parallel)
+library(klaR)
+library(MASS)
+install.packages("doMC",repos="http://R-Forge.R-project.org")
+library(foreach)
+library(iterators)
+library(doMC)
+registerDoMC(cores=4)
+Sys.setlocale("LC_ALL","English")
+sessionInfo()
+```
+
+###2. load data and perform some basic data summary and processing
+We removed all the possible unnecessary variables (i.e. NA, zero-variance or highly correlated) and reduce the input predictors from 159 to 38. We did the exactly same transform for validation and test data.
+```{r dataanalysis, include=TRUE,warning=FALSE,message=FALSE}
+## 1) for reproducible purpose
+set.seed(33321)
+## 2) load the data
+training <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"),na.string=c("NA","#DIV/0!"))
+testing <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"),na.string=c("NA","#DIV/0!"))
+## 3) split the training data into two portions, trainning and validation
+inTrain <- createDataPartition(training$classe,p=0.75,list=FALSE)
+newTraining <- training[inTrain,]
+newValidation <- training[-inTrain,]
+## 4) remove zero covariates or if NA's too many for training set.
+nzv <- nearZeroVar(newTraining,saveMetrics = TRUE)
+newTraining <- newTraining[,nzv$nzv=="FALSE"]
+n <- ncol(newTraining)
+m <- nrow(newTraining)
+list <- list()
+for (i in 1:n) {
+  if (sum(is.na(newTraining[,i]))/m > 0.8 )
+    list[[i]] <- i
+}
+Matrix = do.call(cbind,list)
+myTraining <- newTraining[,-Matrix]
+myTraining <- myTraining[,-1]
+## 5) remove the measurement time stamp or windows
+trainRemove <- grepl("^X|timestamp", names(myTraining))
+myTraining <- myTraining[,!trainRemove]
+## 6) eliminate highly correlated variables
+numeric_ind<-sapply(myTraining,is.numeric)
+correlationMatrix <- cor(myTraining[numeric_ind])
+highCorIdx<-findCorrelation(correlationMatrix,cutoff = 0.75)
+myTraining <- myTraining[,-highCorIdx]
+## 7) do the same transformation for validation set and test set
+c1 <- colnames(myTraining)
+c2 <- colnames(myTraining[,-length(names(myTraining))])
+myValidation <- newValidation[c1]
+myTesting <- testing[c2]
+dim(myTraining);dim(myValidation);dim(myTesting)
+```
+
+#Classification Model Analysis
+###1. Prepare 5-folds Cross validation method to avoid overfitting
+```{r cv_control, tidy=TRUE,include=TRUE,warning=FALSE,message=FALSE}
+fitControl <- trainControl(method ="repeatedcv", number=5, repeats=2)
+```
+###2. Predictions with trees 
+```{r rpart_method, tidy=TRUE,include=TRUE,warning=FALSE,message=FALSE}
+tree <- train(classe ~ ., data=myTraining, method="rpart", trControl=fitControl)
+fancyRpartPlot(tree$finalModel)
+predtree <- predict(tree,newdata = myValidation)
+confusionMatrix(predtree,myValidation$classe)
+varImp(tree,scale=FALSE)
+```
+
+###2. Random Forest
+```{r rf_method, tidy=TRUE,include=TRUE,warning=FALSE,message=FALSE}
+rf <- randomForest(classe ~., data=myTraining, trControl=fitControl)
+predrf <- predict(rf, newdata = myValidation)
+confusionMatrix(predrf,myValidation$classe)
+plot(rf)
+varImp(rf,scale=FALSE)
+varImpPlot(rf)
+```
+
+###3. Gradient Boosting
+```{r gbm_method, tidy=TRUE,include=TRUE,warning=FALSE,message=FALSE}
+gbm <- train(classe ~., data=myTraining, method="gbm",trControl=fitControl,verbose=FALSE)
+predgbm <- predict(gbm, newdata = myValidation)
+confusionMatrix(predgbm,myValidation$classe)$overall
+plot(gbm)
+varImp(gbm,scale=FALSE)
+```
+
+###4. Model based Prediction
+```{r lda_nb_method, tidy=TRUE,include=TRUE,warning=FALSE,message=FALSE}
+## Linear Discriminant Analysis
+lda <- train(classe ~., data=myTraining, method="lda", preProcess=c("center","scale"))
+print(lda)
+predlda <- predict(lda, newdata = myValidation)
+confusionMatrix(predlda,myValidation$classe)$overall
+## Naive Bayes
+nb <- train(classe ~., data=myTraining, method="nb", preProcess=c("center","scale"))
+print(nb)
+prednb <- predict(nb, newdata = myValidation)
+confusionMatrix(prednb, myValidation$classe)$overall
+```
+
+###5. Pick the best model and calculate test error
+- Random Forest gave the highest Accuracy of 99.96%, so the expected out of sample error rate would be 0.04%.
+- Perform Test data Prediction
+```{r test_prediction, tidy=TRUE,include=TRUE,warning=FALSE,message=FALSE}
+predict(rf, myTesting)
+```
