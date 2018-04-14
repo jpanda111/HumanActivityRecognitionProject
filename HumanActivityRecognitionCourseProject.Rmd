@@ -25,7 +25,7 @@ In this report, multiple models have been built based on differnt predictors and
 #Exploratory Data Analysis
 ###1. setup correct knitr setting and needed library
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, results = "asis",tidy = TRUE,include = TRUE,cache = TRUE)
+knitr::opts_chunk$set(echo = TRUE, results = "asis",tidy = TRUE,include = TRUE,cache = TRUE)
 library(lattice)
 library(ggplot2)
 library(caret)
